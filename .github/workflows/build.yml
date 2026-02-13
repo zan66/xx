@@ -1,32 +1,32 @@
-name: Auto Go Mod Tidy
-on:
-  workflow_dispatch: # 手动触发
-  push:
-    paths:
-      - 'go.mod' # 当go.mod修改时自动触发
+# 假设你的 Workflow 原有步骤
+steps:
+  - uses: actions/checkout@v4
 
-jobs:
-  tidy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: true # 保留凭证用于提交
+  - name: Set up Go
+    uses: actions/setup-go@v5
+    with:
+      go-version: '1.21' # 替换为你的 Go 版本
 
-      - name: Set up Go 1.26
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26' # 指定Go 1.26版本
+  - name: 初始化 Go Module 并生成 go.sum
+    run: |
+      # 切换到你的 Go 项目根目录（关键！必须确认路径正确）
+      # 比如你的项目文件在仓库的 ./src 目录下，就写 cd src
+      # 如果项目在仓库根目录，这行可以省略
+      cd 你的Go项目目录路径 
 
-      - name: Run go mod tidy
-        run: |
-          go mod tidy # 执行tidy生成go.sum
-          # 检查文件是否有变化
-          git diff --quiet || git diff --stat
+      # 初始化 Go Module（替换为你的模块名，比如 github.com/你的用户名/仓库名）
+      go mod init github.com/zan66/xx/
 
-      - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v5
-        with:
-          commit_message: "chore: auto go mod tidy (go1.26)"
-          file_pattern: "go.mod go.sum" # 只提交这两个文件
+      # 执行 tidy 生成 go.sum（拉取依赖并校验）
+      go mod tidy
+
+      # 检查生成的文件
+      ls -l go.mod go.sum
+
+      # 可选：如果需要将生成的 go.mod/go.sum 提交回仓库（谨慎使用）
+      # git config --global user.name "GitHub Actions"
+      # git config --global user.email "actions@github.com"
+      # git add go.mod go.sum
+      # git commit -m "Auto generate go.mod and go.sum"
+      # git push
+    shell: /usr/bin/bash -e {0}
