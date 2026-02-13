@@ -1,24 +1,32 @@
-name: 自动执行go mod tidy
+name: Auto Go Mod Tidy
 on:
-  workflow_dispatch:  # 手动触发（也可加push触发）
+  workflow_dispatch: # 手动触发
+  push:
+    paths:
+      - 'go.mod' # 当go.mod修改时自动触发
 
 jobs:
   tidy:
     runs-on: ubuntu-latest
     steps:
-      - name: 克隆仓库
+      - name: Checkout code
         uses: actions/checkout@v4
-        
-      - name: 安装Go
+        with:
+          persist-credentials: true # 保留凭证用于提交
+
+      - name: Set up Go 1.26
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'  # 替换为你的项目Go版本
-          
-      - name: 执行go mod tidy
-        run: go mod tidy
-        
-      - name: 提交并推送修改
+          go-version: '1.26' # 指定Go 1.26版本
+
+      - name: Run go mod tidy
+        run: |
+          go mod tidy # 执行tidy生成go.sum
+          # 检查文件是否有变化
+          git diff --quiet || git diff --stat
+
+      - name: Commit changes
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: "Auto: go mod tidy"
-          file_pattern: "go.mod go.sum"  # 只提交这两个文件
+          commit_message: "chore: auto go mod tidy (go1.26)"
+          file_pattern: "go.mod go.sum" # 只提交这两个文件
