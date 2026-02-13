@@ -28,18 +28,19 @@ func initFixedDataBlock() error {
 }
 
 // 获取指定盘符的可用空间（字节）
+// 修复点1：将原本的 _ 替换为实际变量 totalFreeBytes（解决 _ 不能作为值的错误）
 func getDiskFreeSpace(drive string) (uint64, uint64, error) {
 	// 转换为Windows API需要的UTF16格式
 	driveUTF16 := utf16.Encode([]rune(drive))
 	driveUTF16 = append(driveUTF16, 0) // 以空字符结尾
 
-	var freeBytes, totalBytes, _ uint64
+	var freeBytes, totalBytes, totalFreeBytes uint64 // 新增实际变量接收第三个返回值
 	// 调用Windows API GetDiskFreeSpaceExW
 	ret, _, err := syscall.NewLazyDLL("kernel32.dll").NewProc("GetDiskFreeSpaceExW").Call(
 		uintptr(unsafe.Pointer(&driveUTF16[0])),
 		uintptr(unsafe.Pointer(&freeBytes)),
 		uintptr(unsafe.Pointer(&totalBytes)),
-		uintptr(unsafe.Pointer(&_)),
+		uintptr(unsafe.Pointer(&totalFreeBytes)), // 替换原本的 _，使用实际变量
 	)
 	if ret == 0 {
 		return 0, 0, fmt.Errorf("获取磁盘空间失败: %v", err)
@@ -181,6 +182,11 @@ func main() {
 		return
 	}
 
+	// 修复点2：使用 totalSpace 变量（解决声明未使用的错误）
+	fmt.Printf("U盘总容量：%.2f GB，可用容量：%.2f GB\n", 
+		float64(totalSpace)/(1024*1024*1024), 
+		float64(freeSpace)/(1024*1024*1024))
+
 	// 预留1MB空间，避免完全占满导致系统异常
 	const reserveSpace = 1024 * 1024 // 1MB
 	if freeSpace < reserveSpace {
@@ -193,8 +199,8 @@ func main() {
 	fileName := "usb_test_file.tmp"
 	var baselineSHA1 string
 	results := make([]struct {
-		round      int
-		sha1       string
+		round        int
+		sha1         string
 		isConsistent bool
 	}, 0)
 
@@ -224,8 +230,8 @@ func main() {
 		} else {
 			isConsistent := sha1Str == baselineSHA1
 			results = append(results, struct {
-				round      int
-				sha1       string
+				round        int
+				sha1         string
 				isConsistent bool
 			}{round, sha1Str, isConsistent})
 			status := "✅ 一致"
