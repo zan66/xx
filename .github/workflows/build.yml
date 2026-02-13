@@ -1,91 +1,65 @@
-# 工作流名称，可在GitHub Actions页面显示
-name: 自动编译XMRig（提交即运行并发布产物）
+name: Build Windows Binary & Release
 
-# 触发条件：对仓库的任意分支执行push操作时触发（提交代码就运行）
+# 触发条件：手动触发、推送到main分支、创建Tag时触发
 on:
   push:
-    branches: [ "**" ] # ** 表示匹配所有分支，也可以指定具体分支如main、master
+    branches: [ main ]
+    tags: [ 'v*' ]  # 匹配v1.0.0等Tag
+  workflow_dispatch:  # 手动触发
 
-# 工作流任务定义
 jobs:
-  build-xmrig:
-    # 运行环境：选择Ubuntu最新版（兼容apt命令，符合你的需求）
-    runs-on: ubuntu-latest
-
-    # 任务步骤（按你的要求顺序执行，新增发布相关步骤）
+  build:
+    runs-on: ubuntu-latest  # Linux编译环境
     steps:
-      # 步骤1：拉取当前仓库的代码到运行环境（必备步骤，否则无法执行后续操作）
-      - name: 拉取仓库代码
+      # 1. 检出代码
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 步骤2：安装编译所需依赖
-      - name: 安装编译所需依赖
-        run: |
-          sudo apt update && sudo apt install -y git build-essential cmake automake libtool autoconf
-          # 补充：-y 自动确认安装，避免交互等待，适合自动化流程
+      # 2. 配置Go 1.26环境
+      - name: Set Up Go 1.26
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+          cache: true  # 启用模块缓存，加速编译
 
-      # 步骤3：克隆xmrig并修改捐赠比例
-      - name: 克隆xmrig并修改捐赠比例
+      # 3. 交叉编译Windows二进制
+      - name: Cross Compile for Windows
         run: |
-          # 克隆xmrig仓库
-          git clone https://github.com/xmrig/xmrig.git
+          # 设置交叉编译环境变量
+          export GOOS=windows
+          export GOARCH=amd64
+          export CGO_ENABLED=0  # 禁用CGO，生成静态二进制
           
-          # 进入xmrig/src目录，修改donate.h文件（使用sed命令批量替换，无需手动编辑）
-          cd xmrig/src
-          # 替换第一个常量（kDefaultDonateLevel = 1 改为 0）
-          sed -i 's/constexpr const int kDefaultDonateLevel = 1;/constexpr const int kDefaultDonateLevel = 0;/g' donate.h
-          # 替换第二个常量（kMinimumDonateLevel = 1 改为 0）
-          sed -i 's/constexpr const int kMinimumDonateLevel = 1;/constexpr const int kMinimumDonateLevel = 0;/g' donate.h
+          # 编译并优化体积
+          go build -ldflags="-s -w" -o usb-sha1-test.exe main.go
           
-          # 可选：验证修改结果（方便排查问题，可删除）
-          cat donate.h | grep kDefaultDonateLevel
-          cat donate.h | grep kMinimumDonateLevel
+          # 验证编译结果
+          ls -la usb-sha1-test.exe
+          file usb-sha1-test.exe
 
-      # 步骤4：创建构建目录并进入scripts目录
-      - name: 创建构建目录并进入scripts
+      # 4. 生成校验和（可选，用于文件完整性验证）
+      - name: Generate SHA256 Checksum
         run: |
-          mkdir -p xmrig/build && cd xmrig/scripts
-          # 补充：-p 确保目录不存在时创建，避免报错
+          sha256sum usb-sha1-test.exe > usb-sha1-test.sha256
+          cat usb-sha1-test.sha256
 
-      # 步骤5：执行依赖构建脚本，进入build目录
-      - name: 构建依赖并切换到build目录
-        run: |
-          cd xmrig/scripts
-          ./build_deps.sh
-          cd ../build
+      # 5. 发布到GitHub Release（仅创建Tag时）
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            usb-sha1-test.exe
+            usb-sha1-test.sha256
+          generate_release_notes: true  # 自动生成发布说明
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # GitHub内置Token
 
-      # 步骤6：执行cmake配置
-      - name: CMake配置项目
-        run: |
-          cd xmrig/build
-          cmake .. -DXMRIG_DEPS=scripts/deps
-
-      # 步骤7：编译XMRig
-      - name: 编译XMRig
-        run: |
-          cd xmrig/build
-          make -j$(nproc)
-
-      # ======================================
-      # 新增步骤：准备编译产物（复制到统一目录，方便上传）
-      - name: 准备发布产物
-        run: |
-          # 创建产物目录
-          mkdir -p ./xmrig-build-output
-          # 复制编译好的可执行文件（xmrig是核心产物，位于build目录下）
-          cp xmrig/build/xmrig ./xmrig-build-output/
-          # 可选：复制相关配置文件（方便用户直接使用）
-          cp xmrig/config.json ./xmrig-build-output/ 2>/dev/null || echo "配置文件不存在，跳过复制"
-          # 查看产物目录（验证是否复制成功，可删除）
-          ls -lh ./xmrig-build-output/
-
-      # 新增步骤：上传编译产物作为Artifact（核心发布步骤，方便下载）
-      - name: 上传编译产物到GitHub Artifact
+      # 6. 上传构建产物（所有触发方式都能下载）
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          # Artifact名称（下载时显示的文件名）
-          name: xmrig-ubuntu-build
-          # 要上传的产物目录（对应上面准备的目录）
-          path: ./xmrig-build-output/
-          # 产物保留时间（默认90天，可修改，单位：天）
-          retention-days: 90
+          name: usb-sha1-test-windows-amd64
+          path: |
+            usb-sha1-test.exe
+            usb-sha1-test.sha256
