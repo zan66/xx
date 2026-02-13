@@ -31,7 +31,7 @@ jobs:
         run: |
           # 若项目不在根目录，需先cd到对应目录，比如 cd ./src
           if [ ! -f go.mod ]; then
-            go mod init github.com/zan66/xx/
+            go mod init github.com/zan66/xx
           fi
           go mod tidy
 
