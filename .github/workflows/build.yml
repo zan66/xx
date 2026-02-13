@@ -24,14 +24,14 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.26'
 
       # 步骤3：初始化Go模块+生成go.sum（解决之前的依赖问题）
       - name: Init Go mod and tidy
         run: |
           # 若项目不在根目录，需先cd到对应目录，比如 cd ./src
           if [ ! -f go.mod ]; then
-            go mod init github.com/你的用户名/你的仓库名
+            go mod init github.com/zan66/xx/
           fi
           go mod tidy
 
