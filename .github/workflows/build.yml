@@ -9,10 +9,9 @@ on:
         required: true
         default: 'v1.0.0'
 
-# 核心修复：授予GITHUB_TOKEN足够的权限
+# 移除Release相关权限，仅保留必要的读取权限
 permissions:
-  contents: write  # 必须：创建/修改Release需要该权限
-  packages: read   # 可选：避免权限冗余
+  contents: read
 
 jobs:
   build:
@@ -50,54 +49,46 @@ jobs:
       - name: 验证依赖
         run: go mod verify
 
+      - name: 编译前清理旧产物
+        run: |
+          # 删除所有旧的二进制和校验文件，避免文件冲突
+          rm -rf udisk-write-verify_* *.exe *.sha256 ./build
+          # 创建唯一的输出目录，确保路径不冲突
+          mkdir -p ./build/${{ matrix.goos }}/${{ matrix.goarch }}
+
       - name: 编译二进制文件
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0 # 禁用CGO，生成静态二进制
         run: |
-          # 定义输出文件名
+          # 定义唯一的输出文件名（带系统/架构标识）
           if [ "${{ matrix.goos }}" = "windows" ]; then
             output_name="udisk-write-verify_${{ matrix.goos }}_${{ matrix.goarch }}.exe"
           else
             output_name="udisk-write-verify_${{ matrix.goos }}_${{ matrix.goarch }}"
           fi
-          # 编译
-          go build -ldflags "-s -w" -o $output_name main.go
-          # 校验文件
-          sha256sum $output_name > $output_name.sha256
+          # 输出到唯一目录，避免矩阵编译冲突
+          output_path="./build/${{ matrix.goos }}/${{ matrix.goarch }}/$output_name"
+          
+          # 编译（强制覆盖已有文件）
+          go build -ldflags "-s -w" -o "$output_path" main.go
+          
+          # 生成校验和（输出到同一目录）
+          sha256sum "$output_path" > "$output_path.sha256"
+          
+          # 验证文件是否生成
+          if [ ! -f "$output_path" ]; then
+            echo "编译失败：文件 $output_path 不存在"
+            exit 1
+          fi
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: udisk-tools-${{ matrix.goos }}-${{ matrix.goarch }}
+          # 产物名称包含版本、系统、架构，方便识别
+          name: udisk-tools-${{ github.event.inputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            udisk-write-verify_*
-            *.sha256
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    # 继承外层权限，或单独指定
-    permissions:
-      contents: write
-    steps:
-      - name: 下载所有构建产物
-        uses: actions/download-artifact@v4
-        with:
-          path: ./artifacts
-
-      - name: 创建GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.version }}
-          name: UDisk Tool ${{ github.event.inputs.version }}
-          body: |
-            U盘写入校验工具
-            - 支持Windows/Linux（仅amd64架构）
-            - 基于BLAKE2b生成固定数据
-            - 自动校验写入内容
-          files: |
-            ./artifacts/**/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            ./build/${{ matrix.goos }}/${{ matrix.goarch }}/*
+          # 保留90天，可根据需求调整
+          retention-days: 90
