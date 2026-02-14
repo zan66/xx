@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall" // 新增：导入syscall包
 
 	"golang.org/x/crypto/blake2b"
 )
@@ -46,7 +45,7 @@ func generateFixedData(size int64) ([]byte, []byte, error) {
 		return nil, nil, fmt.Errorf("生成种子失败: %v", err)
 	}
 
-	// 修复：正确接收blake2b.New512的两个返回值
+	// 正确接收blake2b.New512的两个返回值
 	h, err := blake2b.New512(nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("创建BLAKE2b哈希器失败: %v", err)
@@ -87,48 +86,35 @@ func (f *fixedReader) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-// getDiskFreeSpace: 获取目标路径剩余空间（跨平台兼容修复）
+// getDiskFreeSpace: 获取目标路径剩余空间（跨平台兼容，避免编译错误）
 func getDiskFreeSpace(path string) (int64, error) {
-	if runtime.GOOS == "windows" {
-		// Windows 特殊处理：使用syscall获取磁盘空间
-		// 转换路径格式（如 D:\ → \\.\D:）
-		winPath := `\\.\` + filepath.VolumeName(path)
-		h, err := syscall.CreateFile(
-			syscall.StringToUTF16Ptr(winPath),
-			0,
-			syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE,
-			nil,
-			syscall.OPEN_EXISTING,
-			0,
-			0,
-		)
-		if err != nil {
-			return 0, fmt.Errorf("打开Windows盘符失败: %v", err)
-		}
-		defer syscall.CloseHandle(h)
-
-		var freeBytesAvailable, totalBytes, freeBytes int64
-		err = syscall.GetDiskFreeSpaceEx(
-			syscall.StringToUTF16Ptr(winPath),
-			&freeBytesAvailable,
-			&totalBytes,
-			&freeBytes,
-		)
-		if err != nil {
-			return 0, fmt.Errorf("获取Windows磁盘空间失败: %v", err)
-		}
-		return freeBytesAvailable, nil
-	} else {
-		// Linux/Mac：使用statfs获取磁盘空间
-		var stat syscall.Statfs_t
-		err := syscall.Statfs(path, &stat)
-		if err != nil {
-			return 0, fmt.Errorf("获取Linux磁盘空间失败: %v", err)
-		}
-		// 计算剩余空间 = 块大小 * 可用块数
-		freeSpace := int64(stat.Bsize) * int64(stat.Bavail)
-		return freeSpace, nil
+	// 创建临时文件测试写入，间接获取可用空间（兼容跨平台编译）
+	// 注：该方法是通用方案，避免依赖系统专属syscall，解决编译错误
+	tempFile := filepath.Join(path, ".tmp_space_check")
+	f, err := os.Create(tempFile)
+	if err != nil {
+		return 0, fmt.Errorf("创建临时文件失败（无法检测空间）: %v", err)
 	}
+	defer func() {
+		os.Remove(tempFile) // 清理临时文件
+		f.Close()
+	}()
+
+	// 逐步写入数据直到磁盘满（安全上限：100GB，避免无限循环）
+	maxTestSize := int64(100 * 1024 * 1024 * 1024)
+	var written int64
+	buf := make([]byte, 1024*1024) // 1MB缓冲区
+	for written < maxTestSize {
+		n, err := f.Write(buf)
+		if err != nil {
+			// 写入失败=空间不足，返回已写入大小作为可用空间
+			return written, nil
+		}
+		written += int64(n)
+	}
+
+	// 如果写入到100GB仍未失败，返回100GB作为可用空间
+	return maxTestSize, nil
 }
 
 // writeAndVerify: 写入文件并校验
@@ -143,10 +129,14 @@ func writeAndVerify(round int) error {
 	if freeSpace < blockSize {
 		return fmt.Errorf("剩余空间不足（%d字节 < %d字节）", freeSpace, blockSize)
 	}
-	fmt.Printf("U盘剩余空间: %d MB\n", freeSpace/1024/1024)
+	fmt.Printf("U盘剩余空间: %.2f GB\n", float64(freeSpace)/1024/1024/1024)
 
-	// 2. 生成固定数据和校验和
-	data, checksum, err := generateFixedData(freeSpace)
+	// 2. 生成固定数据和校验和（预留100MB空间，避免写满导致无法操作）
+	actualWriteSize := freeSpace - 100*1024*1024
+	if actualWriteSize < blockSize {
+		return fmt.Errorf("预留空间后可用空间不足（%d字节 < %d字节）", actualWriteSize, blockSize)
+	}
+	data, checksum, err := generateFixedData(actualWriteSize)
 	if err != nil {
 		return fmt.Errorf("生成数据失败: %v", err)
 	}
@@ -168,7 +158,7 @@ func writeAndVerify(round int) error {
 	if err := f.Sync(); err != nil {
 		return fmt.Errorf("刷盘失败: %v", err)
 	}
-	fmt.Printf("文件写入完成: %s\n", filePath)
+	fmt.Printf("文件写入完成: %s (大小: %.2f GB)\n", filePath, float64(actualWriteSize)/1024/1024/1024)
 
 	// 4. 校验文件
 	verifyFile, err := os.Open(filePath)
@@ -177,8 +167,8 @@ func writeAndVerify(round int) error {
 	}
 	defer verifyFile.Close()
 
-	// 修复：正确接收blake2b.New512的两个返回值
-	verifyHash, err := blake2b.New512(nil) // 这里之前也会触发相同错误，一并修复
+	// 正确接收blake2b.New512的两个返回值
+	verifyHash, err := blake2b.New512(nil)
 	if err != nil {
 		return fmt.Errorf("创建校验用BLAKE2b哈希器失败: %v", err)
 	}
@@ -193,7 +183,7 @@ func writeAndVerify(round int) error {
 	}
 	fmt.Printf("第 %d 轮校验通过\n", round+1)
 
-	// 5. 删除文件（可选，根据需求保留）
+	// 5. 删除文件（清理U盘）
 	if err := os.Remove(filePath); err != nil {
 		return fmt.Errorf("删除文件失败: %v", err)
 	}
@@ -206,6 +196,15 @@ func main() {
 	fmt.Printf("运行系统: %s %s\n", runtime.GOOS, runtime.GOARCH)
 	fmt.Printf("目标路径: %s\n", targetPath)
 	fmt.Printf("重复次数: %d\n", repeat)
+
+	// 校验目标路径是否可写
+	testFile := filepath.Join(targetPath, ".tmp_write_test")
+	f, err := os.Create(testFile)
+	if err != nil {
+		log.Fatalf("目标路径不可写: %v", err)
+	}
+	f.Close()
+	os.Remove(testFile)
 
 	// 循环执行写入+校验
 	for i := 0; i < repeat; i++ {
