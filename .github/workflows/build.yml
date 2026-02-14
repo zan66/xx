@@ -9,7 +9,7 @@ on:
         required: true
         default: 'v1.0.0'
 
-# 移除Release相关权限，仅保留必要的读取权限
+# 仅保留读取权限
 permissions:
   contents: read
 
@@ -19,7 +19,7 @@ jobs:
     strategy:
       matrix:
         goos: [windows, linux]
-        goarch: [amd64] # 仅amd64架构
+        goarch: [amd64]
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -28,15 +28,17 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          cache: false # 先禁用自动缓存
+          cache: false # 禁用自动缓存，手动控制
 
-      - name: 初始化go mod（指定模块名）
-        run: go mod init udisk-write-verify
+      - name: 清理旧依赖和缓存冲突文件
+        run: |
+          # 删除可能导致缓存冲突的依赖文件
+          rm -rf ~/go/pkg/mod/golang.org/x/crypto*
+          rm -rf ~/.cache/go-build/*
+          # 删除项目内的mod缓存
+          rm -rf go.mod go.sum
 
-      - name: 整理依赖并生成go.sum
-        run: go mod tidy
-
-      - name: 启用Go模块缓存（生成go.sum后）
+      - name: 启用Go模块缓存（优先恢复缓存，再执行mod操作）
         uses: actions/cache@v4
         with:
           path: |
@@ -45,39 +47,39 @@ jobs:
           key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-
+        # 允许缓存恢复失败（不阻断流程）
+        continue-on-error: true
+
+      - name: 初始化go mod
+        run: go mod init udisk-write-verify
+
+      - name: 整理依赖（缓存缺失时重新生成）
+        run: go mod tidy -compat=1.26
 
       - name: 验证依赖
         run: go mod verify
 
       - name: 编译前清理旧产物
         run: |
-          # 删除所有旧的二进制和校验文件，避免文件冲突
           rm -rf udisk-write-verify_* *.exe *.sha256 ./build
-          # 创建唯一的输出目录，确保路径不冲突
           mkdir -p ./build/${{ matrix.goos }}/${{ matrix.goarch }}
 
       - name: 编译二进制文件
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0 # 禁用CGO，生成静态二进制
+          CGO_ENABLED: 0
         run: |
-          # 定义唯一的输出文件名（带系统/架构标识）
           if [ "${{ matrix.goos }}" = "windows" ]; then
             output_name="udisk-write-verify_${{ matrix.goos }}_${{ matrix.goarch }}.exe"
           else
             output_name="udisk-write-verify_${{ matrix.goos }}_${{ matrix.goarch }}"
           fi
-          # 输出到唯一目录，避免矩阵编译冲突
           output_path="./build/${{ matrix.goos }}/${{ matrix.goarch }}/$output_name"
           
-          # 编译（强制覆盖已有文件）
           go build -ldflags "-s -w" -o "$output_path" main.go
-          
-          # 生成校验和（输出到同一目录）
           sha256sum "$output_path" > "$output_path.sha256"
           
-          # 验证文件是否生成
           if [ ! -f "$output_path" ]; then
             echo "编译失败：文件 $output_path 不存在"
             exit 1
@@ -86,9 +88,7 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          # 产物名称包含版本、系统、架构，方便识别
           name: udisk-tools-${{ github.event.inputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
             ./build/${{ matrix.goos }}/${{ matrix.goarch }}/*
-          # 保留90天，可根据需求调整
           retention-days: 90
