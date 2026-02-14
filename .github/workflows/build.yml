@@ -15,7 +15,7 @@ jobs:
     strategy:
       matrix:
         goos: [windows, linux]
-        goarch: [amd64] # 仅保留amd64架构，移除arm64
+        goarch: [amd64] # 仅amd64架构
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
@@ -24,13 +24,23 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          cache: true
+          cache: false # 先禁用自动缓存
 
       - name: 初始化go mod（指定模块名）
         run: go mod init udisk-write-verify
 
       - name: 整理依赖并生成go.sum
         run: go mod tidy
+
+      - name: 启用Go模块缓存（生成go.sum后）
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
 
       - name: 验证依赖
         run: go mod verify
