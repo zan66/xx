@@ -4,12 +4,18 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 )
 
+func init() {
+	// 给全局变量赋值，绑定Linux实现
+	getUDiskInfoImpl = linuxUDiskInfo
+}
+
 // Linux 下的具体实现（无 NewLazyDLL）
-func getUDiskInfoImpl(mountPath string) (string, error) {
+func linuxUDiskInfo(mountPath string) (string, error) {
 	// 校验挂载路径是否存在
 	if !filepath.IsAbs(mountPath) {
 		return "", fmt.Errorf("挂载路径必须是绝对路径（如 /mnt/udisk）")
