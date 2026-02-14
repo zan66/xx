@@ -1,40 +1,57 @@
-# 1. 工作流名称（可选，但建议加）
-name: Build Go Project
-
-# 2. 触发条件（必填，比如push/PR时触发）
+# 触发条件：push/PR 到 main 分支时触发
 on:
   push:
     branches: [ main ]
   pull_request:
     branches: [ main ]
 
-# 3. 核心任务（必填！你缺失的关键字段）
+# 工作流名称
+name: Build Windows & Linux Binaries
+
+# 任务配置
 jobs:
-  # 定义一个名为build的任务（名称可自定义）
   build:
-    # 运行环境（必填）
+    # 运行环境：Ubuntu 最新版（Linux 编译跨平台更方便）
     runs-on: ubuntu-latest
-    # 任务步骤（steps必须嵌套在这里，而非顶级）
+    
     steps:
-      # 步骤1：拉取代码
+      # 1. 拉取代码到构建环境
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 步骤2：设置Go环境（根据你的Go版本调整）
+      # 2. 配置 Go 环境（适配你的 Go 版本，建议指定具体版本如 1.22）
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
+          cache: true # 缓存依赖，加速构建
 
-      # 步骤3：初始化Go模块+生成go.sum（解决之前的依赖问题）
-      - name: Init Go mod and tidy
+      # 3. 初始化 Go 模块（解决你之前的 syscall.NewLazyDLL 编译问题）
+      - name: Init Go modules
         run: |
-          # 若项目不在根目录，需先cd到对应目录，比如 cd ./src
-          if [ ! -f go.mod ]; then
-            go mod init github.com/zan66/xx
-          fi
+          go mod init your-app-name || true # 已有 mod 则忽略错误
           go mod tidy
 
-      # 步骤4：构建项目（示例，可替换为你的实际构建命令）
-      - name: Build project
-        run: go build -v ./...
+      # 4. 编译 Linux 二进制文件（amd64 架构）
+      - name: Build Linux binary
+        run: |
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o app-linux main.go
+          # 验证二进制文件（可选）
+          chmod +x app-linux
+          ls -lh app-linux
+
+      # 5. 编译 Windows 二进制文件（amd64 架构，exe 格式）
+      - name: Build Windows binary
+        run: |
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o app-windows.exe main.go
+          ls -lh app-windows.exe
+
+      # 6. （可选）上传编译产物，方便下载
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: |
+            app-linux
+            app-windows.exe
+          retention-days: 7 # 产物保留 7 天
