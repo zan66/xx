@@ -1,44 +1,63 @@
+# 手动触发配置（核心：仅 workflow_dispatch 事件）
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
+  workflow_dispatch:
+    # 可选：自定义输入参数，手动触发时可选择编译平台
+    inputs:
+      build_target:
+        description: '选择要编译的平台'
+        required: true
+        default: 'both'  # 默认编译 Windows + Linux
+        type: choice
+        options:
+          - both       # 同时编译 Windows + Linux
+          - windows    # 仅编译 Windows
+          - linux      # 仅编译 Linux
 
-name: Build Windows & Linux Binaries
+# 工作流名称
+name: 手动编译 Windows & Linux 二进制
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 1. 拉取代码
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 2. 配置 Go 环境
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26'
           cache: true
 
+      # 3. 初始化 Go 模块
       - name: Init Go modules
         run: |
           go mod init udisk-tool || true
           go mod tidy
 
-      # 编译 Linux 二进制（只编译 Linux 相关文件）
+      # 4. 编译 Linux 二进制（根据手动选择的参数）
       - name: Build Linux binary
+        if: ${{ github.event.inputs.build_target == 'linux' || github.event.inputs.build_target == 'both' }}
         run: |
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o app-linux main.go udisk_linux.go
+          chmod +x app-linux
+          ls -lh app-linux
 
-      # 编译 Windows 二进制（只编译 Windows 相关文件）
+      # 5. 编译 Windows 二进制（根据手动选择的参数）
       - name: Build Windows binary
+        if: ${{ github.event.inputs.build_target == 'windows' || github.event.inputs.build_target == 'both' }}
         run: |
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o app-windows.exe main.go udisk_windows.go
+          ls -lh app-windows.exe
 
+      # 6. 上传编译产物（方便下载）
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: binaries-${{ github.event.inputs.build_target }}
           path: |
-            app-linux
-            app-windows.exe
-          retention-days: 7
+            app-linux*
+            app-windows.exe*
+          retention-days: 7  # 产物保留7天
