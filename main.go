@@ -5,9 +5,14 @@ import (
 	"os"
 )
 
+// 声明 getUDiskInfoImpl 为全局函数（告诉编译器：这个函数由各系统文件实现）
+var getUDiskInfoImpl func(string) (string, error)
+
 // 统一的U盘信息获取入口
 func GetUDiskInfo(path string) (string, error) {
-	// 实际逻辑由不同系统的文件实现
+	if getUDiskInfoImpl == nil {
+		return "", fmt.Errorf("当前系统不支持（仅支持 Linux/Windows）")
+	}
 	return getUDiskInfoImpl(path)
 }
 
