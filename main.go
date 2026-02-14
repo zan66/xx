@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall" // 新增：导入syscall包
 
 	"golang.org/x/crypto/blake2b"
 )
@@ -45,7 +46,7 @@ func generateFixedData(size int64) ([]byte, []byte, error) {
 		return nil, nil, fmt.Errorf("生成种子失败: %v", err)
 	}
 
-	// 创建BLAKE2b哈希器
+	// 修复：正确接收blake2b.New512的两个返回值
 	h, err := blake2b.New512(nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("创建BLAKE2b哈希器失败: %v", err)
@@ -86,32 +87,48 @@ func (f *fixedReader) Read(p []byte) (n int, err error) {
 	return n, nil
 }
 
-// getDiskFreeSpace: 获取目标路径剩余空间（跨平台）
+// getDiskFreeSpace: 获取目标路径剩余空间（跨平台兼容修复）
 func getDiskFreeSpace(path string) (int64, error) {
-	var stat os.FileInfo
-	var err error
-
-	// 不同系统获取磁盘信息
 	if runtime.GOOS == "windows" {
-		// Windows: 直接获取盘符的剩余空间
-		stat, err = os.Stat(path)
+		// Windows 特殊处理：使用syscall获取磁盘空间
+		// 转换路径格式（如 D:\ → \\.\D:）
+		winPath := `\\.\` + filepath.VolumeName(path)
+		h, err := syscall.CreateFile(
+			syscall.StringToUTF16Ptr(winPath),
+			0,
+			syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE,
+			nil,
+			syscall.OPEN_EXISTING,
+			0,
+			0,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("打开Windows盘符失败: %v", err)
+		}
+		defer syscall.CloseHandle(h)
+
+		var freeBytesAvailable, totalBytes, freeBytes int64
+		err = syscall.GetDiskFreeSpaceEx(
+			syscall.StringToUTF16Ptr(winPath),
+			&freeBytesAvailable,
+			&totalBytes,
+			&freeBytes,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("获取Windows磁盘空间失败: %v", err)
+		}
+		return freeBytesAvailable, nil
 	} else {
-		// Linux: 获取挂载路径的剩余空间
-		stat, err = os.Stat(path)
+		// Linux/Mac：使用statfs获取磁盘空间
+		var stat syscall.Statfs_t
+		err := syscall.Statfs(path, &stat)
+		if err != nil {
+			return 0, fmt.Errorf("获取Linux磁盘空间失败: %v", err)
+		}
+		// 计算剩余空间 = 块大小 * 可用块数
+		freeSpace := int64(stat.Bsize) * int64(stat.Bavail)
+		return freeSpace, nil
 	}
-	if err != nil {
-		return 0, fmt.Errorf("获取路径信息失败: %v", err)
-	}
-
-	// 获取文件系统信息
-	fsInfo, ok := stat.Sys().(*syscall.Statfs_t)
-	if !ok {
-		return 0, fmt.Errorf("不支持的文件系统类型")
-	}
-
-	// 计算剩余空间 = 块大小 * 可用块数
-	freeSpace := int64(fsInfo.Bsize) * int64(fsInfo.Bavail)
-	return freeSpace, nil
 }
 
 // writeAndVerify: 写入文件并校验
@@ -160,8 +177,11 @@ func writeAndVerify(round int) error {
 	}
 	defer verifyFile.Close()
 
-	// 读取文件并计算校验和
-	verifyHash := blake2b.New512(nil)
+	// 修复：正确接收blake2b.New512的两个返回值
+	verifyHash, err := blake2b.New512(nil) // 这里之前也会触发相同错误，一并修复
+	if err != nil {
+		return fmt.Errorf("创建校验用BLAKE2b哈希器失败: %v", err)
+	}
 	if _, err := io.Copy(verifyHash, verifyFile); err != nil {
 		return fmt.Errorf("读取校验文件失败: %v", err)
 	}
