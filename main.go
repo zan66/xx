@@ -152,7 +152,8 @@ func (pr *progressReader) printProgress() {
 		percent,
 		float64(read)/1024/1024/1024,
 		float64(pr.total)/1024/1024/1024)
-	if read >= pr.total || err == io.EOF {
+	// 修复：移除未定义的err变量，仅判断是否读取完成
+	if read >= pr.total {
 		fmt.Println() // 进度完成后换行
 	}
 }
