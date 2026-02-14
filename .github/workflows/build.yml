@@ -1,58 +1,85 @@
+name: Build UDisk Tool
+
+# 手动触发运行
 on:
   workflow_dispatch:
     inputs:
-      build_target:
-        description: '选择要编译的平台'
+      version:
+        description: '版本号（如 v1.0.0）'
         required: true
-        default: 'both'
-        type: choice
-        options:
-          - both
-          - windows
-          - linux
-
-name: 手动编译 Windows & Linux 二进制
+        default: 'v1.0.0'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [windows, linux]
+        goarch: [amd64] # 仅保留amd64架构，移除arm64
     steps:
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: Set up Go
+      - name: 设置Go环境
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          cache: false
+          cache: true
 
-      - name: Init Go modules and install dependencies
+      - name: 初始化go mod（指定模块名）
+        run: go mod init udisk-write-verify
+
+      - name: 整理依赖并生成go.sum
+        run: go mod tidy
+
+      - name: 验证依赖
+        run: go mod verify
+
+      - name: 编译二进制文件
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0 # 禁用CGO，生成静态二进制
         run: |
-          if [ ! -f go.mod ]; then
-            go mod init udisk-tool
+          # 定义输出文件名
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            output_name="udisk-write-verify_${{ matrix.goos }}_${{ matrix.goarch }}.exe"
+          else
+            output_name="udisk-write-verify_${{ matrix.goos }}_${{ matrix.goarch }}"
           fi
-          # 下载 Blake2b 依赖
-          go get golang.org/x/crypto/blake2b
-          go mod tidy
+          # 编译
+          go build -ldflags "-s -w" -o $output_name main.go
+          # 校验文件
+          sha256sum $output_name > $output_name.sha256
 
-      - name: Build Linux binary
-        if: ${{ github.event.inputs.build_target == 'linux' || github.event.inputs.build_target == 'both' }}
-        run: |
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o app-linux main.go udisk_linux.go
-          chmod +x app-linux
-          ls -lh app-linux
-
-      - name: Build Windows binary
-        if: ${{ github.event.inputs.build_target == 'windows' || github.event.inputs.build_target == 'both' }}
-        run: |
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o app-windows.exe main.go udisk_windows.go
-          ls -lh app-windows.exe
-
-      - name: Upload artifacts
+      - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
-          name: binaries-${{ github.event.inputs.build_target }}
+          name: udisk-tools-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
-            app-linux*
-            app-windows.exe*
-          retention-days: 7
+            udisk-write-verify_*
+            *.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载所有构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: ./artifacts
+
+      - name: 创建GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: UDisk Tool ${{ github.event.inputs.version }}
+          body: |
+            U盘写入校验工具
+            - 支持Windows/Linux（仅amd64架构）
+            - 基于BLAKE2b生成固定数据
+            - 自动校验写入内容
+          files: |
+            ./artifacts/**/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
