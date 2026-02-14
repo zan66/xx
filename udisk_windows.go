@@ -8,9 +8,14 @@ import (
 	"unsafe"
 )
 
+func init() {
+	// 给全局变量赋值，绑定Windows实现
+	getUDiskInfoImpl = windowsUDiskInfo
+}
+
 // Windows 下的具体实现（包含 NewLazyDLL）
-func getUDiskInfoImpl(drive string) (string, error) {
-	// 示例：调用 Windows DLL 获取磁盘信息（你原有的 NewLazyDLL 逻辑）
+func windowsUDiskInfo(drive string) (string, error) {
+	// 示例：调用 Windows DLL 获取磁盘信息
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	getDiskFreeSpace := kernel32.NewProc("GetDiskFreeSpaceW")
 
