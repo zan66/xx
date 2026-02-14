@@ -17,40 +17,24 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 1. 拉取代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 配置 Go 环境（先不启用缓存）
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.26'
-          # 先关闭自动缓存，避免提前触发缓存检查
+          go-version: '1.22'
           cache: false
 
-      # 3. 初始化 Go 模块，生成 go.mod/go.sum
-      - name: Init Go modules and generate go.sum
+      - name: Init Go modules and install dependencies
         run: |
-          # 确保 go.mod 存在
           if [ ! -f go.mod ]; then
             go mod init udisk-tool
           fi
-          # 生成 go.sum（关键：先有 go.sum 再缓存）
+          # 下载 Blake2b 依赖
+          go get golang.org/x/crypto/blake2b
           go mod tidy
 
-      # 4. 手动启用 Go 缓存（此时 go.sum 已生成）
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/go-build
-            ~/go/pkg/mod
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
-
-      # 5. 编译 Linux 二进制
       - name: Build Linux binary
         if: ${{ github.event.inputs.build_target == 'linux' || github.event.inputs.build_target == 'both' }}
         run: |
@@ -58,14 +42,12 @@ jobs:
           chmod +x app-linux
           ls -lh app-linux
 
-      # 6. 编译 Windows 二进制
       - name: Build Windows binary
         if: ${{ github.event.inputs.build_target == 'windows' || github.event.inputs.build_target == 'both' }}
         run: |
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o app-windows.exe main.go udisk_windows.go
           ls -lh app-windows.exe
 
-      # 7. 上传产物
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
