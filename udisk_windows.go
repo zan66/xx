@@ -4,7 +4,7 @@
 package main
 
 import (
-	"fmt"   // 必须添加这个导入！
+	"fmt"
 	"syscall"
 	"unsafe"
 )
