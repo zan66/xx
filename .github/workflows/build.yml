@@ -9,6 +9,11 @@ on:
         required: true
         default: 'v1.0.0'
 
+# 核心修复：授予GITHUB_TOKEN足够的权限
+permissions:
+  contents: write  # 必须：创建/修改Release需要该权限
+  packages: read   # 可选：避免权限冗余
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -73,6 +78,9 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    # 继承外层权限，或单独指定
+    permissions:
+      contents: write
     steps:
       - name: 下载所有构建产物
         uses: actions/download-artifact@v4
