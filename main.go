@@ -59,6 +59,9 @@ func writeFileToUsb(usbPath, fileName string, totalSize uint64, h hash.Hash) err
 	if err != nil {
 		return fmt.Errorf("创建文件失败: %v", err)
 	}
+	    if err := f.Sync(); err != nil {
+        return fmt.Errorf("刷新文件缓存失败: %v", err)
+    }
 	defer f.Close()
 
 	// 生成固定数据块
@@ -172,6 +175,12 @@ func runSingleTest(usbPath string, testNum int) error {
 	if err := writeFileToUsb(usbPath, fileName, writeSize, h); err != nil {
 		return fmt.Errorf("写入文件失败: %v", err)
 	}
+	
+	// 核心优化2：写入完成后延迟2秒，模拟U盘静置场景，测试稳定性
+	fmt.Println("写入完成，等待2秒后开始校验...")
+	import "time" // 若文件顶部未导入time，需先添加
+	time.Sleep(2 * time.Second)
+
 
 	// 4. 校验文件哈希（修改：用writeSize替代freeSpace）
 	fmt.Println("开始校验文件哈希...")
