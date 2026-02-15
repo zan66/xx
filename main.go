@@ -133,7 +133,7 @@ func verifyFileHash(usbPath, fileName string, totalSize uint64, h hash.Hash) ([]
 	return h.Sum(nil), nil
 }
 
-// 单次写入-校验流程（核心修改：添加文件删除逻辑）
+// 单次写入-校验流程（含1MB预留空间+自动删除文件）
 func runSingleTest(usbPath string, testNum int) error {
 	fmt.Printf("\n=== 开始第 %d 次测试 ===\n", testNum)
 	fileName := fmt.Sprintf("usb_test_%d.dat", testNum)
@@ -147,7 +147,19 @@ func runSingleTest(usbPath string, testNum int) error {
 	if freeSpace == 0 {
 		return fmt.Errorf("U盘无可用空间")
 	}
+
+	// 核心修改：预留1MB空余空间，避免写满触发系统错误
+	const reserveSpace = 1 * 1024 * 1024 // 1MB = 1024*1024字节
+	var writeSize uint64
+	if freeSpace > reserveSpace {
+		writeSize = freeSpace - reserveSpace
+	} else {
+		return fmt.Errorf("U盘可用空间不足（小于1MB），无法测试")
+	}
+
+	// 打印可用空间和实际写入空间（方便查看）
 	fmt.Printf("U盘可用空间: %.2f GB\n", float64(freeSpace)/(1024*1024*1024))
+	fmt.Printf("实际写入空间: %.2f GB（预留1MB空余空间）\n", float64(writeSize)/(1024*1024*1024))
 
 	// 2. 初始化BLAKE2b哈希器
 	h, err := blake2b.New256(nil)
@@ -155,15 +167,15 @@ func runSingleTest(usbPath string, testNum int) error {
 		return fmt.Errorf("初始化BLAKE2b失败: %v", err)
 	}
 
-	// 3. 分块写入文件
+	// 3. 分块写入文件（修改：用writeSize替代freeSpace）
 	fmt.Println("开始写入文件...")
-	if err := writeFileToUsb(usbPath, fileName, freeSpace, h); err != nil {
+	if err := writeFileToUsb(usbPath, fileName, writeSize, h); err != nil {
 		return fmt.Errorf("写入文件失败: %v", err)
 	}
 
-	// 4. 校验文件哈希
+	// 4. 校验文件哈希（修改：用writeSize替代freeSpace）
 	fmt.Println("开始校验文件哈希...")
-	hashBytes, err := verifyFileHash(usbPath, fileName, freeSpace, h)
+	hashBytes, err := verifyFileHash(usbPath, fileName, writeSize, h)
 	if err != nil {
 		// 校验失败时也尝试删除文件，避免残留
 		fmt.Printf("校验失败，尝试删除残留文件: %s\n", filePath)
@@ -172,7 +184,7 @@ func runSingleTest(usbPath string, testNum int) error {
 	}
 	fmt.Printf("第 %d 次校验完成，BLAKE2b哈希值: %x\n", testNum, hashBytes)
 
-	// 5. 校验完成后强制删除文件，释放空间（核心修改）
+	// 5. 校验完成后强制删除文件，释放空间
 	fmt.Printf("开始删除测试文件: %s\n", filePath)
 	if err := os.Remove(filePath); err != nil {
 		return fmt.Errorf("删除文件失败: %v", err)
