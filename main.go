@@ -1,6 +1,3 @@
-//go:build windows || linux
-// +build windows linux
-
 package main
 
 import (
@@ -11,14 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"unsafe"
 
 	"golang.org/x/crypto/blake2b"
-)
-
-// 针对Windows的syscall导入（条件编译）
-import (
-	_ "syscall"
 )
 
 // 分块大小（64MB，可根据内存调整）
@@ -50,7 +41,7 @@ func generateFixedBlock(h hash.Hash, blockSize int) ([]byte, error) {
 	return block, nil
 }
 
-// 获取U盘可用空间（字节）
+// 获取U盘可用空间（字节）- 通用入口
 func getUsbFreeSpace(path string) (uint64, error) {
 	if runtime.GOOS == "windows" {
 		// Windows: 盘符格式如 "D:"
@@ -61,61 +52,6 @@ func getUsbFreeSpace(path string) (uint64, error) {
 	}
 }
 
-// -------------------------- Windows 专属实现 --------------------------
-//go:build windows
-func getWindowsFreeSpace(drive string) (uint64, error) {
-	kernel32, err := syscall.LoadLibrary("kernel32.dll")
-	if err != nil {
-		return 0, fmt.Errorf("加载kernel32.dll失败: %v", err)
-	}
-	defer syscall.FreeLibrary(kernel32)
-
-	getDiskFreeSpaceEx, err := syscall.GetProcAddress(kernel32, "GetDiskFreeSpaceExW")
-	if err != nil {
-		return 0, fmt.Errorf("获取GetDiskFreeSpaceExW函数地址失败: %v", err)
-	}
-
-	var freeBytesAvailable uint64
-	drivePtr, err := syscall.UTF16PtrFromString(drive)
-	if err != nil {
-		return 0, fmt.Errorf("转换盘符路径失败: %v", err)
-	}
-
-	ret, _, err := syscall.Syscall6(
-		uintptr(getDiskFreeSpaceEx),
-		4,
-		uintptr(unsafe.Pointer(drivePtr)),
-		uintptr(unsafe.Pointer(&freeBytesAvailable)),
-		0, 0, 0, 0,
-	)
-	if ret == 0 {
-		return 0, fmt.Errorf("调用GetDiskFreeSpaceExW失败: %v", err)
-	}
-	return freeBytesAvailable, nil
-}
-
-//go:build windows
-func getLinuxFreeSpace(mountPath string) (uint64, error) {
-	return 0, fmt.Errorf("当前系统为Windows，不支持Linux路径查询")
-}
-
-// -------------------------- Linux 专属实现 --------------------------
-//go:build linux
-func getLinuxFreeSpace(mountPath string) (uint64, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(mountPath, &stat); err != nil {
-		return 0, fmt.Errorf("调用statfs失败: %v", err)
-	}
-	// 可用空间 = 块大小 * 可用块数
-	return uint64(stat.Bsize) * uint64(stat.Bavail), nil
-}
-
-//go:build linux
-func getWindowsFreeSpace(drive string) (uint64, error) {
-	return 0, fmt.Errorf("当前系统为Linux，不支持Windows盘符查询")
-}
-
-// -------------------------- 通用代码 --------------------------
 // 分块写入文件到U盘
 func writeFileToUsb(usbPath, fileName string, totalSize uint64, h hash.Hash) error {
 	filePath := filepath.Join(usbPath, fileName)
