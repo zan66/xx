@@ -1,6 +1,5 @@
 name: Build USB Hash Check Binary
 
-# 手动触发运行
 on:
   workflow_dispatch:
 
@@ -8,35 +7,31 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      # 1. 拉取代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 2. 设置Go环境（1.26）
       - name: Set up Go 1.26
         uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-          cache: false # 避免缓存干扰初始化
+          cache: false
 
-      # 3. 初始化go.mod和go.sum
       - name: Initialize go.mod and go.sum
         run: |
           go mod init github.com/zan66/xx
-          go get golang.org/x/crypto@latest # 拉取BLAKE2b依赖
-          go mod tidy # 整理依赖并生成go.sum
+          go get golang.org/x/crypto@latest
+          go mod tidy
 
-      # 4. 编译Windows二进制（amd64）
+      # 修正：编译整个项目（.）而非单个main.go
       - name: Build for Windows
         run: |
-          GOOS=windows GOARCH=amd64 go build -o usb-hash-check-windows-amd64.exe main.go
+          GOOS=windows GOARCH=amd64 go build -o usb-hash-check-windows-amd64.exe .
 
-      # 5. 编译Linux二进制（amd64）
+      # 修正：编译整个项目（.）而非单个main.go
       - name: Build for Linux
         run: |
-          GOOS=linux GOARCH=amd64 go build -o usb-hash-check-linux-amd64 main.go
+          GOOS=linux GOARCH=amd64 go build -o usb-hash-check-linux-amd64 .
 
-      # 6. 上传二进制文件作为artifact
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
