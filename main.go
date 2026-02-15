@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-
+	"time"
 	"golang.org/x/crypto/blake2b"
 )
 
@@ -178,7 +178,6 @@ func runSingleTest(usbPath string, testNum int) error {
 	
 	// 核心优化2：写入完成后延迟2秒，模拟U盘静置场景，测试稳定性
 	fmt.Println("写入完成，等待2秒后开始校验...")
-	import "time" // 若文件顶部未导入time，需先添加
 	time.Sleep(2 * time.Second)
 
 
