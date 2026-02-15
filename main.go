@@ -133,10 +133,11 @@ func verifyFileHash(usbPath, fileName string, totalSize uint64, h hash.Hash) ([]
 	return h.Sum(nil), nil
 }
 
-// 单次写入-校验流程
+// 单次写入-校验流程（核心修改：添加文件删除逻辑）
 func runSingleTest(usbPath string, testNum int) error {
 	fmt.Printf("\n=== 开始第 %d 次测试 ===\n", testNum)
 	fileName := fmt.Sprintf("usb_test_%d.dat", testNum)
+	filePath := filepath.Join(usbPath, fileName) // 提前定义文件路径，方便后续删除
 
 	// 1. 获取U盘可用空间
 	freeSpace, err := getUsbFreeSpace(usbPath)
@@ -164,14 +165,20 @@ func runSingleTest(usbPath string, testNum int) error {
 	fmt.Println("开始校验文件哈希...")
 	hashBytes, err := verifyFileHash(usbPath, fileName, freeSpace, h)
 	if err != nil {
+		// 校验失败时也尝试删除文件，避免残留
+		fmt.Printf("校验失败，尝试删除残留文件: %s\n", filePath)
+		_ = os.Remove(filePath)
 		return fmt.Errorf("校验哈希失败: %v", err)
 	}
 	fmt.Printf("第 %d 次校验完成，BLAKE2b哈希值: %x\n", testNum, hashBytes)
 
-	// 5. 删除测试文件（可选，根据需求注释）
-	// if err := os.Remove(filepath.Join(usbPath, fileName)); err != nil {
-	// 	return fmt.Errorf("删除文件失败: %v", err)
-	// }
+	// 5. 校验完成后强制删除文件，释放空间（核心修改）
+	fmt.Printf("开始删除测试文件: %s\n", filePath)
+	if err := os.Remove(filePath); err != nil {
+		return fmt.Errorf("删除文件失败: %v", err)
+	}
+	fmt.Printf("第 %d 次测试文件已删除，释放U盘空间\n", testNum)
+
 	return nil
 }
 
