@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/rand"
 	"flag"
 	"fmt"
 	"hash"
@@ -9,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/crypto/blake2b"
@@ -20,7 +18,7 @@ const chunkSize = 64 * 1024 * 1024
 
 // 生成固定的BLAKE2b哈希数据块
 func generateFixedBlock(h hash.Hash, blockSize int) ([]byte, error) {
-	// 生成随机种子（固定种子保证数据固定）
+	// 生成固定种子（保证数据固定）
 	seed := make([]byte, 32)
 	copy(seed, []byte("usb-hash-check-fixed-seed-2026"))
 
@@ -55,23 +53,29 @@ func getUsbFreeSpace(path string) (uint64, error) {
 	}
 }
 
+// -------------------------- Windows 专属代码 --------------------------
+//go:build windows
+// +build windows
+
+import "syscall"
+
 // Windows获取磁盘可用空间
 func getWindowsFreeSpace(drive string) (uint64, error) {
 	kernel32, err := syscall.LoadLibrary("kernel32.dll")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("加载kernel32.dll失败: %v", err)
 	}
 	defer syscall.FreeLibrary(kernel32)
 
 	getDiskFreeSpaceEx, err := syscall.GetProcAddress(kernel32, "GetDiskFreeSpaceExW")
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("获取GetDiskFreeSpaceExW函数地址失败: %v", err)
 	}
 
 	var freeBytesAvailable uint64
 	drivePtr, err := syscall.UTF16PtrFromString(drive)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("转换盘符路径失败: %v", err)
 	}
 
 	ret, _, err := syscall.Syscall6(
@@ -82,21 +86,38 @@ func getWindowsFreeSpace(drive string) (uint64, error) {
 		0, 0, 0, 0,
 	)
 	if ret == 0 {
-		return 0, err
+		return 0, fmt.Errorf("调用GetDiskFreeSpaceExW失败: %v", err)
 	}
 	return freeBytesAvailable, nil
 }
+
+// Linux函数占位（避免编译错误）
+func getLinuxFreeSpace(mountPath string) (uint64, error) {
+	return 0, fmt.Errorf("Linux函数不支持Windows编译环境")
+}
+
+// -------------------------- Linux 专属代码 --------------------------
+//go:build linux
+// +build linux
+
+import "syscall"
 
 // Linux获取挂载路径可用空间
 func getLinuxFreeSpace(mountPath string) (uint64, error) {
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(mountPath, &stat); err != nil {
-		return 0, err
+		return 0, fmt.Errorf("调用statfs失败: %v", err)
 	}
 	// 可用空间 = 块大小 * 可用块数
 	return uint64(stat.Bsize) * uint64(stat.Bavail), nil
 }
 
+// Windows函数占位（避免编译错误）
+func getWindowsFreeSpace(drive string) (uint64, error) {
+	return 0, fmt.Errorf("Windows函数不支持Linux编译环境")
+}
+
+// -------------------------- 通用代码 --------------------------
 // 分块写入文件到U盘
 func writeFileToUsb(usbPath, fileName string, totalSize uint64, h hash.Hash) error {
 	filePath := filepath.Join(usbPath, fileName)
