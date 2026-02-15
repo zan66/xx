@@ -9,8 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"sync/atomic"
-	"time"
+	"syscall"
+	"unsafe"
 
 	"golang.org/x/crypto/blake2b"
 )
@@ -57,10 +57,6 @@ func getUsbFreeSpace(path string) (uint64, error) {
 
 // Windows获取磁盘可用空间
 func getWindowsFreeSpace(drive string) (uint64, error) {
-	import (
-		"syscall"
-		"unsafe"
-	)
 	kernel32, err := syscall.LoadLibrary("kernel32.dll")
 	if err != nil {
 		return 0, err
@@ -93,9 +89,6 @@ func getWindowsFreeSpace(drive string) (uint64, error) {
 
 // Linux获取挂载路径可用空间
 func getLinuxFreeSpace(mountPath string) (uint64, error) {
-	import (
-		"syscall"
-	)
 	var stat syscall.Statfs_t
 	if err := syscall.Statfs(mountPath, &stat); err != nil {
 		return 0, err
