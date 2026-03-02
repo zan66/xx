@@ -1,41 +1,47 @@
-name: Build USB Hash Check Binary
+name: SSH + Tailscale Setup
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 手动触发工作流
 
 jobs:
-  build:
+  setup-ssh-tailscale:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read  # 基础权限
+
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Set up Go 1.26
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.26'
-          cache: false
-
-      - name: Initialize go.mod and go.sum
+      - name: 安装必要依赖
         run: |
-          go mod init github.com/zan66/xx
-          go get golang.org/x/crypto@latest
-          go mod tidy
+          sudo apt update && sudo apt install -y openssh-server openssh-client
 
-      # 修正：编译整个项目（.）而非单个main.go
-      - name: Build for Windows
+      - name: 配置 SSH 服务（启用 root 登录和 ed25519 验证）
         run: |
-          GOOS=windows GOARCH=amd64 go build -o usb-hash-check-windows-amd64.exe .
+          # 创建 SSH 目录并设置权限
+          sudo mkdir -p /root/.ssh
+          sudo chmod 700 /root/.ssh
+          
+          # 将私钥写入 authorized_keys
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" | sudo tee /root/.ssh/authorized_keys > /dev/null
+          sudo chmod 600 /root/.ssh/authorized_keys
+          sudo chown root:root /root/.ssh/authorized_keys
+          
+          # 修改 SSH 配置
+          sudo sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#HostKey .*ed25519.*$/HostKey \/etc\/ssh\/ssh_host_ed25519_key/' /etc/ssh/sshd_config
+          
+          # 重启 SSH 服务
+          sudo service ssh restart
 
-      # 修正：编译整个项目（.）而非单个main.go
-      - name: Build for Linux
+      - name: 安装并启动 Tailscale
         run: |
-          GOOS=linux GOARCH=amd64 go build -o usb-hash-check-linux-amd64 .
+          # 安装 Tailscale
+          curl -fsSL https://tailscale.com/install.sh | sh
+          # 使用 auth-key 启动 Tailscale
+          sudo tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }}
 
-      - name: Upload binaries
-        uses: actions/upload-artifact@v4
-        with:
-          name: usb-hash-check-binaries
-          path: |
-            usb-hash-check-windows-amd64.exe
-            usb-hash-check-linux-amd64
+      - name: 保持 GitHub Actions 运行（防止退出）
+        run: |
+          # 无限循环保持进程运行
+          while true; do sleep 3600; done
