@@ -1,60 +1,65 @@
-name: Sync LMDB and Upload
+name: Deploy Monero Node with SSH and Tailscale
 
-# 触发条件：可根据你的需求修改（比如手动触发、定时触发、代码推送触发）
 on:
   workflow_dispatch:  # 手动触发
-  # schedule:
-  #   - cron: '0 0 * * *'  # 每天凌晨触发（可选）
-  # push:
-  #   branches: [ main ]  # 代码推送到main分支触发（可选）
 
 jobs:
-  sync-and-upload:
-    runs-on: ubuntu-latest  # 使用Ubuntu最新版运行环境
+  deploy-monero-node:
+    runs-on: ubuntu-latest
     steps:
-      - name: 检出代码（可选，若不需要仓库文件可删除）
-        uses: actions/checkout@v4
-
-      - name: 安装 Tailscale
+      - name: Setup SSH Server
         run: |
-          # 安装Tailscale依赖和客户端
+          # 更新系统并安装必要工具
+          sudo apt update && sudo apt install -y openssh-server screen curl
+
+          # 配置 SSH 允许 root 登录和密钥认证
+          sudo sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
+          sudo sed -i 's/^#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+          # 创建 root .ssh 目录并添加公钥
+          sudo mkdir -p /root/.ssh
+          sudo echo "${{ secrets.SSH_PUBLIC_KEY }}" | sudo tee /root/.ssh/authorized_keys
+          sudo chmod 700 /root/.ssh
+          sudo chmod 600 /root/.ssh/authorized_keys
+
+          # 重启 SSH 服务
+          sudo service ssh restart
+
+      - name: Install and Start Tailscale
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          # 安装 Tailscale
           curl -fsSL https://tailscale.com/install.sh | sh
-          # 启动Tailscale并认证
-          tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }}
-          # 验证Tailscale连接
-          tailscale status
+          # 启动 Tailscale 并认证
+          sudo tailscale up --auth-key=${TAILSCALE_AUTH_KEY}
 
-      - name: 配置SSH（支持ed25519私钥）
-        uses: webfactory/ssh-agent@v0.9.0
-        with:
-          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
-
-      - name: 安装rsync和xz压缩工具
+      - name: Download and Extract Monero CLI
         run: |
-          sudo apt-get update
-          sudo apt-get install -y rsync xz-utils
+          # 创建数据目录
+          sudo mkdir -p /root/mm
+          # 下载门罗币 CLI
+          curl -L https://downloads.getmonero.org/cli/linux64 -o monero-cli.tar.bz2
+          # 解压
+          sudo tar -xvf monero-cli.tar.bz2
+          # 进入解压后的目录（适配不同版本命名）
+          MONERO_DIR=$(ls -d monero-linux-x86_64-*)
+          cd $MONERO_DIR
 
-      - name: 通过rsync同步远程lmdb目录
+          # 创建 screen 会话并运行 monerod
+          sudo screen -dmS monero bash -c "./monerod --data-dir /root/mm --prune-blockchain --add-priority-node=p2pmd.xmrvsbeast.com:18080 --add-priority-node=nodes.hashvault.pro:18080 --enforce-dns-checkpointing --enable-dns-blocklist"
+
+      - name: Keep Action Running
         run: |
-          # 同步远程服务器m的/root/lmdb到本地/root/lmdb
-          # 添加StrictHostKeyChecking=no避免首次连接的主机密钥确认
-          rsync -avP -e "ssh -o StrictHostKeyChecking=no" root@m:/root/lmdb /root/
-
-      - name: 压缩lmdb目录为mm.xz
-        run: |
-          # 使用xz压缩，-9是最高压缩比，-T0自动使用多核
-          tar -cJf /root/mm.xz -C /root lmdb
-          # 验证压缩文件
-          ls -lh /root/mm.xz
-
-      - name: 上传mm.xz作为构建产物
-        uses: actions/upload-artifact@v4
-        with:
-          name: lmdb-compressed
-          path: /root/mm.xz
-          retention-days: 7  # 产物保留7天，可根据需求修改
-
-      - name: 清理Tailscale连接（可选）
-        if: always()  # 无论前面步骤是否失败，都执行清理
-        run: |
-          tailscale down
+          # 保持任务不终止（无限循环）
+          while true; do
+            sleep 3600  # 每小时检查一次
+            # 检查 monerod 是否在运行，确保服务存活
+            if ! pgrep -x "monerod" > /dev/null; then
+              echo "monerod process stopped, restarting..."
+              MONERO_DIR=$(ls -d monero-linux-x86_64-*)
+              cd $MONERO_DIR
+              sudo screen -dmS monero bash -c "./monerod --data-dir /root/mm --prune-blockchain --add-priority-node=p2pmd.xmrvsbeast.com:18080 --add-priority-node=nodes.hashvault.pro:18080 --enforce-dns-checkpointing --enable-dns-blocklist"
+            fi
+          done
