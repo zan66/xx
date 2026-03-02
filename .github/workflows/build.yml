@@ -1,47 +1,60 @@
-name: SSH + Tailscale Setup
+name: Sync LMDB and Upload
 
+# 触发条件：可根据你的需求修改（比如手动触发、定时触发、代码推送触发）
 on:
-  workflow_dispatch:  # 手动触发工作流
+  workflow_dispatch:  # 手动触发
+  # schedule:
+  #   - cron: '0 0 * * *'  # 每天凌晨触发（可选）
+  # push:
+  #   branches: [ main ]  # 代码推送到main分支触发（可选）
 
 jobs:
-  setup-ssh-tailscale:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read  # 基础权限
-
+  sync-and-upload:
+    runs-on: ubuntu-latest  # 使用Ubuntu最新版运行环境
     steps:
-      - name: 安装必要依赖
-        run: |
-          sudo apt update && sudo apt install -y openssh-server openssh-client
+      - name: 检出代码（可选，若不需要仓库文件可删除）
+        uses: actions/checkout@v4
 
-      - name: 配置 SSH 服务（启用 root 登录和 ed25519 验证）
+      - name: 安装 Tailscale
         run: |
-          # 创建 SSH 目录并设置权限
-          sudo mkdir -p /root/.ssh
-          sudo chmod 700 /root/.ssh
-          
-          # 将私钥写入 authorized_keys
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" | sudo tee /root/.ssh/authorized_keys > /dev/null
-          sudo chmod 600 /root/.ssh/authorized_keys
-          sudo chown root:root /root/.ssh/authorized_keys
-          
-          # 修改 SSH 配置
-          sudo sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
-          sudo sed -i 's/^#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
-          sudo sed -i 's/^#HostKey .*ed25519.*$/HostKey \/etc\/ssh\/ssh_host_ed25519_key/' /etc/ssh/sshd_config
-          
-          # 重启 SSH 服务
-          sudo service ssh restart
-
-      - name: 安装并启动 Tailscale
-        run: |
-          # 安装 Tailscale
+          # 安装Tailscale依赖和客户端
           curl -fsSL https://tailscale.com/install.sh | sh
-          # 使用 auth-key 启动 Tailscale
-          sudo tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }}
+          # 启动Tailscale并认证
+          tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }}
+          # 验证Tailscale连接
+          tailscale status
 
-      - name: 保持 GitHub Actions 运行（防止退出）
+      - name: 配置SSH（支持ed25519私钥）
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: 安装rsync和xz压缩工具
         run: |
-          # 无限循环保持进程运行
-          while true; do sleep 3600; done
+          sudo apt-get update
+          sudo apt-get install -y rsync xz-utils
+
+      - name: 通过rsync同步远程lmdb目录
+        run: |
+          # 同步远程服务器m的/root/lmdb到本地/root/lmdb
+          # 添加StrictHostKeyChecking=no避免首次连接的主机密钥确认
+          rsync -avP -e "ssh -o StrictHostKeyChecking=no" root@m:/root/lmdb /root/
+
+      - name: 压缩lmdb目录为mm.xz
+        run: |
+          # 使用xz压缩，-9是最高压缩比，-T0自动使用多核
+          tar -cJf /root/mm.xz -C /root lmdb
+          # 验证压缩文件
+          ls -lh /root/mm.xz
+
+      - name: 上传mm.xz作为构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: lmdb-compressed
+          path: /root/mm.xz
+          retention-days: 7  # 产物保留7天，可根据需求修改
+
+      - name: 清理Tailscale连接（可选）
+        if: always()  # 无论前面步骤是否失败，都执行清理
+        run: |
+          tailscale down
