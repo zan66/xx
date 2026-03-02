@@ -1,65 +1,42 @@
-name: Deploy Monero Node with SSH and Tailscale
+name: SSH + Tailscale Runner
 
 on:
-  workflow_dispatch:  # 手动触发
+  workflow_dispatch:  # 手动触发工作流
 
 jobs:
-  deploy-monero-node:
+  setup-ssh-tailscale:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup SSH Server
+      - name: 配置系统环境，开启 SSH 服务
         run: |
           # 更新系统并安装必要工具
-          sudo apt update && sudo apt install -y openssh-server screen curl
+          sudo apt update && sudo apt install -y openssh-server
 
           # 配置 SSH 允许 root 登录和密钥认证
           sudo sed -i 's/^#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config
           sudo sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
           sudo sed -i 's/^#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
-          # 创建 root .ssh 目录并添加公钥
+          # 创建 root 用户的 .ssh 目录并配置公钥
           sudo mkdir -p /root/.ssh
-          sudo echo "${{ secrets.SSH_PUBLIC_KEY }}" | sudo tee /root/.ssh/authorized_keys
+          sudo echo "${{ secrets.SSH_PUBLIC_KEY }}" > /root/.ssh/authorized_keys
           sudo chmod 700 /root/.ssh
           sudo chmod 600 /root/.ssh/authorized_keys
+          sudo chown -R root:root /root/.ssh
 
-          # 重启 SSH 服务
+          # 重启 SSH 服务使配置生效
           sudo service ssh restart
 
-      - name: Install and Start Tailscale
-        env:
-          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+      - name: 安装并启动 Tailscale
         run: |
           # 安装 Tailscale
           curl -fsSL https://tailscale.com/install.sh | sh
-          # 启动 Tailscale 并认证
-          sudo tailscale up --auth-key=${TAILSCALE_AUTH_KEY}
+          # 使用密钥启动 Tailscale
+          sudo tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }}
+          # 输出 Tailscale IP 方便连接
+          echo "Tailscale IP: $(tailscale ip -4)"
 
-      - name: Download and Extract Monero CLI
+      - name: 保持 GitHub Actions 任务不终止
         run: |
-          # 创建数据目录
-          sudo mkdir -p /root/mm
-          # 下载门罗币 CLI
-          curl -L https://downloads.getmonero.org/cli/linux64 -o monero-cli.tar.bz2
-          # 解压
-          sudo tar -xvf monero-cli.tar.bz2
-          # 进入解压后的目录（适配不同版本命名）
-          MONERO_DIR=$(ls -d monero-linux-x86_64-*)
-          cd $MONERO_DIR
-
-          # 创建 screen 会话并运行 monerod
-          sudo screen -dmS monero bash -c "./monerod --data-dir /root/mm --prune-blockchain --add-priority-node=p2pmd.xmrvsbeast.com:18080 --add-priority-node=nodes.hashvault.pro:18080 --enforce-dns-checkpointing --enable-dns-blocklist"
-
-      - name: Keep Action Running
-        run: |
-          # 保持任务不终止（无限循环）
-          while true; do
-            sleep 3600  # 每小时检查一次
-            # 检查 monerod 是否在运行，确保服务存活
-            if ! pgrep -x "monerod" > /dev/null; then
-              echo "monerod process stopped, restarting..."
-              MONERO_DIR=$(ls -d monero-linux-x86_64-*)
-              cd $MONERO_DIR
-              sudo screen -dmS monero bash -c "./monerod --data-dir /root/mm --prune-blockchain --add-priority-node=p2pmd.xmrvsbeast.com:18080 --add-priority-node=nodes.hashvault.pro:18080 --enforce-dns-checkpointing --enable-dns-blocklist"
-            fi
-          done
+          # 无限循环保持进程运行
+          while true; do sleep 3600; done
