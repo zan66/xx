@@ -17,9 +17,10 @@ jobs:
           sudo sed -i 's/^#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
           sudo sed -i 's/^#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config
 
-          # 创建 root 用户的 .ssh 目录并配置公钥
-          sudo mkdir -p /root/.ssh
-          sudo echo "${{ secrets.SSH_PUBLIC_KEY }}" > /root/.ssh/authorized_keys
+          # 关键修复：使用 sudo tee 写入 root 目录的文件（解决 Permission denied）
+          # 先清空文件（如果存在），再写入公钥，避免权限问题
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" | sudo tee /root/.ssh/authorized_keys > /dev/null
+          # 设置正确的权限（必须严格，否则 SSH 会拒绝登录）
           sudo chmod 700 /root/.ssh
           sudo chmod 600 /root/.ssh/authorized_keys
           sudo chown -R root:root /root/.ssh
